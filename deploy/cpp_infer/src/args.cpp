@@ -15,6 +15,7 @@
 #include <gflags/gflags.h>
 
 // common args
+DEFINE_int32(sample_num, 10, "fetch one frame per sample_num.");
 DEFINE_bool(use_gpu, false, "Infering with GPU or CPU.");
 DEFINE_bool(use_tensorrt, false, "Whether use tensorrt.");
 DEFINE_int32(gpu_id, 0, "Device id of GPU to execute.");

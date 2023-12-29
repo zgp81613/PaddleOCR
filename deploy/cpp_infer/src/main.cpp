@@ -14,9 +14,10 @@
 #include "opencv2/core.hpp"
 #include "opencv2/imgcodecs.hpp"
 #include "opencv2/imgproc.hpp"
+#include "opencv2/opencv.hpp"
 #include <iostream>
 #include <vector>
-
+#include <sys/time.h>
 #include <include/args.h>
 #include <include/paddleocr.h>
 #include <include/paddlestructure.h>
@@ -78,6 +79,45 @@ void check_params() {
     std::cout << "precison should be 'fp32'(default), 'fp16' or 'int8'. "
               << std::endl;
     exit(1);
+  }
+}
+
+void ocr_imglist(PPOCR & ocr, std::vector<cv::Mat> &img_list) {
+  //PPOCR ocr = PPOCR();
+
+  if (FLAGS_benchmark) {
+    ocr.reset_timer();
+  }
+
+  std::vector<std::vector<OCRPredictResult>> ocr_results =
+      ocr.ocr(img_list, FLAGS_det, FLAGS_rec, FLAGS_cls);
+
+  for (int i = 0; i < img_list.size(); ++i) {
+    Utility::print_result(ocr_results[i]);
+  }
+
+  if (FLAGS_benchmark) {
+    ocr.benchmark_log(img_list.size());
+  }
+}
+
+void ocr_img(cv::Mat& img) {
+  PPOCR ocr = PPOCR();
+
+  if (FLAGS_benchmark) {
+    ocr.reset_timer();
+  }
+
+  std::vector<cv::Mat> img_list;
+  img_list.push_back(img);
+
+  std::vector<std::vector<OCRPredictResult>> ocr_results =
+      ocr.ocr(img_list, FLAGS_det, FLAGS_rec, FLAGS_cls);
+
+  Utility::print_result(ocr_results[0]);
+
+  if (FLAGS_benchmark) {
+    ocr.benchmark_log(1);
   }
 }
 
@@ -174,6 +214,7 @@ void structure(std::vector<cv::String> &cv_all_img_names) {
   }
 }
 
+#define TIMEDIFF(s, e) ((e.tv_sec - s.tv_sec)*1000 + (e.tv_usec - s.tv_usec)/1000)
 int main(int argc, char **argv) {
   // Parsing command-line
   google::ParseCommandLineFlags(&argc, &argv, true);
@@ -185,18 +226,77 @@ int main(int argc, char **argv) {
     exit(1);
   }
 
-  std::vector<cv::String> cv_all_img_names;
-  cv::glob(FLAGS_image_dir, cv_all_img_names);
-  std::cout << "total images num: " << cv_all_img_names.size() << std::endl;
+  PPOCR ocr_handle = PPOCR();
+  cv::String video_path = FLAGS_image_dir;
 
-  if (!Utility::PathExists(FLAGS_output)) {
-    Utility::CreateDir(FLAGS_output);
+  struct timeval start_time;
+  struct timeval end_time;
+
+  gettimeofday(&start_time, NULL);
+  cv::VideoCapture video(video_path);
+
+  if(!video.isOpened()){
+        std::cout << "failed to open " << video_path << std::endl;
+        return -1;
   }
-  if (FLAGS_type == "ocr") {
-    ocr(cv_all_img_names);
-  } else if (FLAGS_type == "structure") {
-    structure(cv_all_img_names);
-  } else {
-    std::cout << "only value in ['ocr','structure'] is supported" << std::endl;
+
+  cv::Mat frame;
+  int nframe = 0;
+
+  std::vector<cv::Mat> img_list;
+  int batch = FLAGS_rec_batch_num;
+  int sample_rate = FLAGS_sample_num;
+  bool save_img = false;
+  struct timeval t1, t2;
+
+  long time1 = 0, time2 = 0, time3 = 0;
+  while (true) {
+    gettimeofday(&t1, NULL);
+    video >> frame;
+    if (frame.empty()) {
+      break;
+    }
+
+    gettimeofday(&t2, NULL);
+    time1 += TIMEDIFF(t1, t2);
+
+    if (nframe % sample_rate == 0) {
+      gettimeofday(&t1, NULL);
+      //ocr_img(frame);
+      if (save_img) {
+        char buf[64] = {0};
+        //make sure FLAGS_output exist.
+        snprintf(buf,sizeof(buf), "%s/%.5d.png", FLAGS_output.c_str(), nframe);
+        cv::imwrite(buf, frame);
+      }
+
+      if (img_list.size() == batch) {
+        ocr_imglist(ocr_handle,img_list); 
+	img_list.clear();
+      }
+      auto frame_copy = frame.clone();
+      img_list.push_back(frame_copy);
+
+      gettimeofday(&t2, NULL);
+      
+      time2 += TIMEDIFF(t1, t2);
+
+    }
+    nframe ++;
   }
+
+  if (img_list.size() > 0) {
+    gettimeofday(&t1, NULL);
+    ocr_imglist(ocr_handle,img_list);
+    gettimeofday(&t2, NULL);
+    time3 = TIMEDIFF(t1, t2);
+  }
+
+  gettimeofday(&end_time, NULL);
+  std::cout << "TOTAL: " << TIMEDIFF(start_time, end_time) 
+            << ", time1:" << time1 
+	    << ", time2:" << time2 
+	    << ", time3:" << time3 
+            << ", frame: "<< nframe
+            << std::endl;
 }

@@ -17,6 +17,7 @@
 #include <gflags/gflags.h>
 
 // common args
+DECLARE_int32(sample_num);
 DECLARE_bool(use_gpu);
 DECLARE_bool(use_tensorrt);
 DECLARE_int32(gpu_id);
